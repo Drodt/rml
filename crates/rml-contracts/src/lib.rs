@@ -34,7 +34,7 @@ pub mod well_founded;
 pub use ghost::Ghost;
 pub use logic::{int::Int, ops::IndexLogic, seq::Seq};
 pub use model::{DeepModel, ShallowModel};
-pub use well_founded::{well_founded_check, WellFounded};
+pub use well_founded::{WellFounded, well_founded_check};
 
 #[cfg(rml)]
 pub mod ghost;
@@ -82,6 +82,13 @@ mod macros {
         #[rml::decl::internal]
         #[rustc_diagnostic_item = "rml_equiv"]
         pub fn equiv<T>(_: T, _: T) -> bool {
+            true
+        }
+
+        #[rml::decl::logic]
+        #[rml::decl::internal]
+        #[rustc_diagnostic_item = "rml_impl"]
+        pub fn implication<T>(_: T, _: T) -> bool {
             true
         }
 

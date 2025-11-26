@@ -9,7 +9,6 @@ use rustc_ast::{
     Mutability, StrStyle, TraitObjectSyntax, UintTy,
 };
 use rustc_hir::{
-    def::{CtorKind, CtorOf, DefKind, NonMacroAttrKind, Res},
     AngleBrackets, AnonConst, Arm, BareFnTy, BinOp, BinOpKind, Block, BlockCheckMode, Body,
     Closure, ClosureBinder, ConstArg, ConstArgKind, ConstBlock, Constness, DotDotPos, Expr,
     ExprField, ExprKind, FnDecl, FnRetTy, GenericArg, GenericArgs, GenericArgsParentheses,
@@ -18,6 +17,7 @@ use rustc_hir::{
     Lit, MatchSource, MutTy, OpaqueTy, Param, ParamName, Pat, PatExpr, PatExprKind, PatField,
     PatKind, Path, PathSegment, PolyTraitRef, PrimTy, QPath, RangeEnd, Stmt, StmtKind,
     StructTailExpr, TraitRef, Ty, TyKind, TyPat, TyPatKind, UnOp, UnsafeSource,
+    def::{CtorKind, CtorOf, DefKind, NonMacroAttrKind, Res},
 };
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{MacroKind, Symbol};
@@ -39,6 +39,7 @@ use super::{
     TermTraitRef, TermTy, TermTyKind, TermTyPat, TermTyPatKind, TermUintTy, TermUnOp,
     TermUnsafeSource,
 };
+use crate::term::TermDef;
 
 /// Allows translating from `T` to `Self`, where `T` is a HIR structure. Since
 /// some structures reference bodies, we require access to the HIR.
@@ -95,7 +96,8 @@ impl<'tcx> FromHir<'tcx, ExprKind<'tcx>> for TermKind {
                 ExprKind::Path(QPath::Resolved(None, Path { segments, .. }))
                     if is_rml_fn(segments) =>
                 {
-                    let kind = get_rml_fn_kind(segments).expect("expected valid rml function");
+                    let kind = get_rml_fn_kind(segments)
+                        .expect(&format!("expected valid rml function; fn: {segments:?}"));
 
                     if let Some(qkind) = kind.get_quant_kind() {
                         let clo: TermClosure = match args[0].kind {
@@ -147,7 +149,20 @@ impl<'tcx> FromHir<'tcx, ExprKind<'tcx>> for TermKind {
                                 right: right.into(),
                             }
                         }
-                        RmlFnKind::Stub(_) => unreachable!(),
+                        RmlFnKind::Stub(StubKind::Implication) => {
+                            let left: Term = (&args[0]).hir_into(tcx);
+                            let right: Term = (&args[1]).hir_into(tcx);
+
+                            TermKind::Binary {
+                                op: TermBinOp {
+                                    node: TermBinOpKind::Implication,
+                                    span: recv.span.into(),
+                                },
+                                left: left.into(),
+                                right: right.into(),
+                            }
+                        }
+                        RmlFnKind::Stub(s) => panic!("Unsupported stubs {s:?}"),
                         RmlFnKind::TraitFn(TraitFn::ShallowModel) => {
                             let term: Term = (&args[0]).hir_into(tcx);
                             TermKind::Model {
@@ -473,10 +488,16 @@ impl<'tcx> FromHir<'tcx, &'tcx Stmt<'tcx>> for TermStmt {
 impl<'tcx> FromHir<'tcx, StmtKind<'tcx>> for TermStmtKind {
     fn from_hir(value: StmtKind<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         match value {
-            StmtKind::Let(l) => Self::Let(l.hir_into(tcx)),
-            StmtKind::Item(i) => Self::Item(i.into()),
-            StmtKind::Expr(e) => Self::Term(Box::new(e.hir_into(tcx))),
-            StmtKind::Semi(e) => Self::Semi(Box::new(e.hir_into(tcx))),
+            StmtKind::Let(l) => Self::Let {
+                r#let: l.hir_into(tcx),
+            },
+            StmtKind::Item(i) => Self::Item { id: i.into() },
+            StmtKind::Expr(e) => Self::Term {
+                term: Box::new(e.hir_into(tcx)),
+            },
+            StmtKind::Semi(e) => Self::Semi {
+                term: Box::new(e.hir_into(tcx)),
+            },
         }
     }
 }
@@ -677,27 +698,49 @@ impl<'tcx, A> FromHir<'tcx, &'tcx Ty<'tcx, A>> for TermTy {
 impl<'tcx, A> FromHir<'tcx, &'tcx TyKind<'tcx, A>> for TermTyKind {
     fn from_hir(value: &'tcx TyKind<'tcx, A>, tcx: TyCtxt<'tcx>) -> Self {
         match value {
-            TyKind::Slice(ty) => Self::Slice(Box::new((*ty).hir_into(tcx))),
-            TyKind::Array(ty, len) => Self::Array(
-                Box::new((*ty).hir_into(tcx)),
-                Box::new((*len).hir_into(tcx)),
-            ),
-            TyKind::Ptr(mty) => Self::Ptr(Box::new((*mty).hir_into(tcx))),
-            TyKind::Ref(l, mty) => Self::Ref((*l).into(), Box::new((*mty).hir_into(tcx))),
-            TyKind::BareFn(f) => Self::BareFn((*f).hir_into(tcx)),
+            TyKind::Slice(ty) => Self::Slice {
+                ty: Box::new((*ty).hir_into(tcx)),
+            },
+            TyKind::Array(ty, len) => Self::Array {
+                ty: Box::new((*ty).hir_into(tcx)),
+                len: Box::new((*len).hir_into(tcx)),
+            },
+            TyKind::Ptr(mty) => Self::Ptr {
+                ty: Box::new((*mty).hir_into(tcx)),
+            },
+            TyKind::Ref(l, mty) => Self::Ref {
+                lifetime: (*l).into(),
+                ty: Box::new((*mty).hir_into(tcx)),
+            },
+            TyKind::BareFn(f) => Self::BareFn {
+                ty: (*f).hir_into(tcx),
+            },
             TyKind::Never => Self::Never,
-            TyKind::Tup(tys) => Self::Tup(tys.iter().map(|ty| ty.hir_into(tcx)).collect()),
-            TyKind::Path(p) => Self::Path(p.hir_into(tcx)),
-            TyKind::OpaqueDef(ty) => Self::OpaqueDef((*ty).hir_into(tcx)),
-            TyKind::TraitObject(prefs, tagged) => Self::TraitObject(
-                prefs.iter().map(|r| r.hir_into(tcx)).collect(),
-                tagged.pointer().into(),
-                tagged.tag().into(),
-            ),
-            TyKind::Typeof(c) => Self::Typeof(Box::new((*c).hir_into(tcx))),
+            TyKind::Tup(tys) => Self::Tup {
+                tys: tys.iter().map(|ty| ty.hir_into(tcx)).collect(),
+            },
+            TyKind::Path(p) => Self::Path {
+                path: p.hir_into(tcx),
+            },
+            TyKind::OpaqueDef(ty) => Self::OpaqueDef {
+                ty: (*ty).hir_into(tcx),
+            },
+            TyKind::TraitObject(prefs, tagged) => Self::TraitObject {
+                refs: prefs.iter().map(|r| r.hir_into(tcx)).collect(),
+                lifetime: tagged.pointer().into(),
+                syntax: tagged.tag().into(),
+            },
+            TyKind::Typeof(c) => Self::Typeof {
+                r#const: Box::new((*c).hir_into(tcx)),
+            },
             TyKind::Infer(..) => Self::Infer,
-            TyKind::InferDelegation(did, _) => Self::InferDelegation((*did).into()),
-            TyKind::Pat(ty, pat) => Self::Pat(Box::new((*ty).hir_into(tcx)), (*pat).hir_into(tcx)),
+            TyKind::InferDelegation(did, _) => Self::InferDelegation {
+                def_id: (*did).into(),
+            },
+            TyKind::Pat(ty, pat) => Self::Pat {
+                ty: Box::new((*ty).hir_into(tcx)),
+                pat: (*pat).hir_into(tcx),
+            },
             TyKind::Err(_) => unreachable!(),
             TyKind::UnsafeBinder(_unsafe_binder_ty) => todo!(),
             TyKind::TraitAscription(_generic_bounds) => todo!(),
@@ -1215,8 +1258,10 @@ where
     fn from(value: Res<Id1>) -> Self {
         match value {
             Res::Def(dk, did) => Self::Def {
-                def: dk.into(),
-                id: did.into(),
+                def: TermDef {
+                    kind: dk.into(),
+                    id: did.into(),
+                },
             },
             Res::PrimTy(ty) => Self::PrimTy { ty: ty.into() },
             Res::SelfTyParam { trait_ } => Self::SelfTyParam {
@@ -1257,11 +1302,16 @@ impl From<DefKind> for TermDefKind {
             DefKind::Fn => Self::Fn,
             DefKind::Const => Self::Const,
             DefKind::ConstParam => Self::ConstParam,
-            DefKind::Static { mutability, .. } => Self::Static(mutability.into()),
-            DefKind::Ctor(of, kind) => Self::Ctor(of.into(), kind.into()),
+            DefKind::Static { mutability, .. } => Self::Static {
+                mutability: mutability.into(),
+            },
+            DefKind::Ctor(of, kind) => Self::Ctor {
+                ctor_of: of.into(),
+                kind: kind.into(),
+            },
             DefKind::AssocFn => Self::AssocFn,
             DefKind::AssocConst => Self::AnonConst,
-            DefKind::Macro(k) => Self::Macro(k.into()),
+            DefKind::Macro(k) => Self::Macro { kind: k.into() },
             DefKind::ExternCrate => Self::ExternCrate,
             DefKind::Use => Self::Use,
             DefKind::ForeignMod => Self::ForeignMod,
@@ -1329,9 +1379,9 @@ impl From<NonMacroAttrKind> for TermNonMacroAttrKind {
 impl From<PrimTy> for TermPrimTy {
     fn from(value: PrimTy) -> Self {
         match value {
-            PrimTy::Int(i) => Self::Int(i.into()),
-            PrimTy::Uint(i) => Self::Uint(i.into()),
-            PrimTy::Float(f) => Self::Float(f.into()),
+            PrimTy::Int(i) => Self::Int { ty: i.into() },
+            PrimTy::Uint(i) => Self::Uint { ty: i.into() },
+            PrimTy::Float(f) => Self::Float { ty: f.into() },
             PrimTy::Str => Self::Str,
             PrimTy::Bool => Self::Bool,
             PrimTy::Char => Self::Char,
@@ -1376,10 +1426,12 @@ impl From<FloatTy> for TermFloatTy {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum StubKind {
     Exists,
     Forall,
     Equiv,
+    Implication,
 }
 
 enum TraitFn {
@@ -1428,6 +1480,8 @@ fn get_rml_fn_kind(segments: &[PathSegment]) -> Option<RmlFnKind> {
             Some(RmlFnKind::Stub(StubKind::Forall))
         } else if name == Symbol::intern("equiv") {
             Some(RmlFnKind::Stub(StubKind::Equiv))
+        } else if name == Symbol::intern("implication") {
+            Some(RmlFnKind::Stub(StubKind::Implication))
         } else {
             None
         }

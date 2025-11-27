@@ -107,18 +107,18 @@ impl<'tcx> FromHir<'tcx, ExprKind<'tcx>> for TermKind {
                         let param = {
                             let c_param = &clo.body.params[0];
 
-                            let ident = match &c_param.pat.kind {
+                            let (ident, id) = match &c_param.pat.kind {
                                 TermPatKind::Binding {
                                     mode: _,
-                                    hir_id: _,
+                                    hir_id: id,
                                     ident,
                                     pat: _,
-                                } => ident.clone(),
+                                } => (ident.clone(), (*id).into()),
                                 _ => unreachable!(),
                             };
 
                             QuantorParam {
-                                hir_id: c_param.hir_id,
+                                hir_id: id,
                                 ident,
                                 ty: clo.fn_decl.inputs[0].clone(),
                                 span: c_param.span,

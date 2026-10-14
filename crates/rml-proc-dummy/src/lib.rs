@@ -5,11 +5,12 @@
 
 extern crate proc_macro;
 use proc_macro::TokenStream as TS1;
-use proc_macro2::Span;
+use proc_macro2::{Group, Span};
+use quote::quote;
 use rml_syn::{
-    extern_spec::ExternSpecItem, locset::LocSet, subject::LogicSubject, SpecContent, TBlock, Term,
+    SpecContent, TBlock, Term, extern_spec::ExternSpecItem, locset::LocSet, subject::LogicSubject,
 };
-use syn::{parse_macro_input, Path};
+use syn::{Block, Path, parse_macro_input};
 
 /// A specification case for a function. The attribute takes a [SpecContent]
 /// and must be attached to a function or method, which need not have a body.
@@ -101,6 +102,37 @@ pub fn rml(tokens: TS1) -> TS1 {
 pub fn proof_assert(assertion: TS1) -> TS1 {
     let _ = parse_macro_input!(assertion with TBlock::parse_within);
     TS1::new()
+}
+
+#[proc_macro]
+pub fn ghost(content: TS1) -> TS1 {
+    let g = Group::new(proc_macro2::Delimiter::Brace, content.clone().into());
+    let stmts = parse_macro_input!(content with Block::parse_within);
+    let block = Block {
+        brace_token: syn::token::Brace {
+            span: g.delim_span(),
+        },
+        stmts,
+    };
+
+    // let y = ; -> would cause a compile error, so return a placeholder instead
+    quote! {
+        if false {
+            ::rml_contracts::ghost::Ghost::new(#block)
+        } else {
+            ::rml_contracts::ghost::Ghost::phantom()
+        }
+    }
+    .into()
+}
+
+#[proc_macro]
+pub fn snapshot(input: TS1) -> TS1 {
+    let expr = parse_macro_input!(input as syn::Expr);
+    quote! {
+        ::rml_contracts::snapshot::snapshot(#expr)
+    }
+    .into()
 }
 
 /// Specifies external data structures or functions. Takes an optional [Path] to

@@ -7,12 +7,12 @@
 
 use func::fn_spec_item;
 use proc_macro::TokenStream as TS1;
-use proc_macro2::{Span, TokenStream as TS2};
+use proc_macro2::{Group, Span, TokenStream as TS2};
 use quote::{quote, quote_spanned};
 use rml_syn::{
-    extern_spec::ExternSpecItem, subject::LogicSubject, Encode, SpecContent, TBlock, Term,
+    Encode, SpecContent, TBlock, Term, extern_spec::ExternSpecItem, subject::LogicSubject,
 };
-use syn::{parse_macro_input, parse_quote, spanned::Spanned, Path, ReturnType};
+use syn::{Block, Path, ReturnType, parse_macro_input, parse_quote, spanned::Spanned};
 
 mod extern_spec;
 mod func;
@@ -239,6 +239,55 @@ pub fn proof_assert(assertion: TS1) -> TS1 {
                 }
             }
         }
+    })
+}
+
+#[proc_macro]
+pub fn ghost(content: TS1) -> TS1 {
+    let g = Group::new(proc_macro2::Delimiter::Brace, content.clone().into());
+    let stmts = parse_macro_input!(content with Block::parse_within);
+    let block = Block {
+        brace_token: syn::token::Brace {
+            span: g.delim_span(),
+        },
+        stmts,
+    };
+
+    TS1::from(quote! {
+        {
+            #[allow(unused_must_use, unused_variables)]
+            let _ = {
+                #[rml::decl::ghost]
+                || #block
+            };
+            if false {
+                ::rml_contracts::ghost::Ghost::new(#block)
+            } else {
+                ::rml_contracts::ghost::Ghost::phantom()
+            }
+        }
+    })
+}
+
+#[proc_macro]
+pub fn snapshot(assertion: TS1) -> TS1 {
+    let assert = parse_macro_input!(assertion with TBlock::parse_within);
+    let assert_body = assert
+        .into_iter()
+        .map(|stmt| {
+            let sp = stmt.span();
+            let stmt_encoded = stmt.encode();
+            quote_spanned! {sp  => #stmt_encoded}
+        })
+        .collect::<TS2>();
+
+    TS1::from(quote! {
+        ::rml_contracts::stubs::snapshot_from_fn(
+            #[rml::no_translate]
+            #[rml::spec]
+            #[rml::spec::snapshot]
+            ||  {#assert_body}
+        )
     })
 }
 

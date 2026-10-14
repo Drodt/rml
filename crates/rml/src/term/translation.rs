@@ -39,42 +39,7 @@ use super::{
     TermTraitRef, TermTy, TermTyKind, TermTyPat, TermTyPatKind, TermUintTy, TermUnOp,
     TermUnsafeSource,
 };
-use crate::term::TermDef;
-
-/// Allows translating from `T` to `Self`, where `T` is a HIR structure. Since
-/// some structures reference bodies, we require access to the HIR.
-pub trait FromHir<'tcx, T>
-where
-    T: Sized,
-{
-    /// Translate from `value` to `Self`, where `T` is a HIR structure. Since
-    /// some structures reference bodies, we require access to the HIR via
-    /// `tcx`.
-    fn from_hir(value: T, tcx: TyCtxt<'tcx>) -> Self;
-}
-
-/// Allows translating from `Self` to `T`, where `Self` is a HIR structure.
-/// Since some structures reference bodies, we require access to the HIR.
-///
-/// **Do not implement this directly.** Use [FromHir] instead.
-pub trait HirInto<'tcx, T>
-where
-    T: Sized,
-{
-    /// Translate from `self` to `T`, where `self` is a HIR structure. Since
-    /// some structures reference bodies, we require access to the HIR via
-    /// `tcx`.
-    fn hir_into(self, tcx: TyCtxt<'tcx>) -> T;
-}
-
-impl<'tcx, T, U> HirInto<'tcx, U> for T
-where
-    U: FromHir<'tcx, T>,
-{
-    fn hir_into(self, tcx: TyCtxt<'tcx>) -> U {
-        U::from_hir(self, tcx)
-    }
-}
+use crate::{FromHir, HirInto, term::TermDef};
 
 impl<'tcx> FromHir<'tcx, &'tcx Expr<'tcx>> for Term {
     fn from_hir(value: &'tcx Expr<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
@@ -734,9 +699,7 @@ impl<'tcx, A> FromHir<'tcx, &'tcx TyKind<'tcx, A>> for TermTyKind {
                 r#const: Box::new((*c).hir_into(tcx)),
             },
             TyKind::Infer(..) => Self::Infer,
-            TyKind::InferDelegation(did, _) => Self::InferDelegation {
-                def_id: (*did).into(),
-            },
+            TyKind::InferDelegation(did, _) => Self::InferDelegation { def_id: did.into() },
             TyKind::Pat(ty, pat) => Self::Pat {
                 ty: Box::new((*ty).hir_into(tcx)),
                 pat: (*pat).hir_into(tcx),
@@ -1260,23 +1223,23 @@ where
             Res::Def(dk, did) => Self::Def {
                 def: TermDef {
                     kind: dk.into(),
-                    id: did.into(),
+                    id: (&did).into(),
                 },
             },
             Res::PrimTy(ty) => Self::PrimTy { ty: ty.into() },
             Res::SelfTyParam { trait_ } => Self::SelfTyParam {
-                trait_: trait_.into(),
+                trait_: (&trait_).into(),
             },
             Res::SelfTyAlias {
                 alias_to,
                 forbid_generic,
                 is_trait_impl,
             } => Self::SelfTyAlias {
-                alias_to: alias_to.into(),
+                alias_to: (&alias_to).into(),
                 forbid_generic,
                 is_trait_impl,
             },
-            Res::SelfCtor(c) => Self::SelfCtor { id: c.into() },
+            Res::SelfCtor(c) => Self::SelfCtor { id: (&c).into() },
             Res::Local(l) => Self::Local { id: l.into() },
             Res::ToolMod => Self::ToolMod,
             Res::NonMacroAttr(n) => Self::NonMacroAttr { kind: n.into() },
@@ -1426,7 +1389,7 @@ impl From<FloatTy> for TermFloatTy {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum StubKind {
     Exists,
     Forall,

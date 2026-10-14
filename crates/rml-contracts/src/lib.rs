@@ -2,25 +2,24 @@
 
 //! Procedural (attribute) macros to specify Rust code. Either generates
 //! additional specification functions, methods, and closures, or changes
-//! nothing at all, depending on whether `--cfg rml` is set. Do not set this
-//! flag yourself, use `cargo-rml` instead.
+//! nothing at all, depending on whether --cfg rml is set. Do not set this
+//! flag yourself, use cargo-rml instead.
 //!
 //! # Usage
 //!
 //! To specify contracts, import this crate like this:
-//! ```
+//!
 //! extern crate rml_contracts;
 //! use rml_contracts::*;
-//! ```
+
 //! This will add the necessary attributes, definition of logic-only types, and
 //! add some specification to standard library items.
 //!
 //! If you want to add attributes to loops or closures to specify them, you must
 //! add the following features to your crate:
-//! ```
+//!
 //! #![feature(stmt_expr_attributes)]
 //! #![feature(proc_macro_hygiene)]
-//! ```
 
 extern crate self as rml_contracts;
 
@@ -37,21 +36,87 @@ pub use model::{DeepModel, ShallowModel};
 pub use well_founded::{WellFounded, well_founded_check};
 
 #[cfg(rml)]
+pub mod snapshot;
+#[cfg(not(rml))]
+pub mod snapshot {
+    use std::{
+        marker::PhantomData,
+        ops::{Deref, DerefMut},
+    };
+    pub struct Snapshot<T: ?Sized>(PhantomData<T>);
+
+    impl<T> Snapshot<T> {
+        pub fn new(_: T) -> Self {
+            Self(PhantomData)
+        }
+
+        pub fn phantom() -> Self {
+            Self(PhantomData)
+        }
+
+        pub fn from_fn(_: fn() -> T) -> Self {
+            Self(PhantomData)
+        }
+    }
+
+    pub fn snapshot<T>(_v: T) -> T {
+        panic!()
+    }
+
+    impl<T: ?Sized> Deref for Snapshot<T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            panic!()
+        }
+    }
+
+    impl<T: ?Sized> DerefMut for Snapshot<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            panic!()
+        }
+    }
+}
+
+#[cfg(rml)]
 pub mod ghost;
 
 #[cfg(not(rml))]
 pub mod ghost {
-    pub struct Ghost<T>(std::marker::PhantomData<T>)
+    use std::{
+        marker::PhantomData,
+        ops::{Deref, DerefMut},
+    };
+
+    pub struct Ghost<T>(PhantomData<T>)
     where
         T: ?Sized;
 
     impl<T> Ghost<T> {
-        pub fn new() -> Ghost<T> {
-            Ghost(std::marker::PhantomData)
+        pub fn new(_: T) -> Ghost<T> {
+            Self(PhantomData)
+        }
+
+        pub fn phantom() -> Ghost<T> {
+            Self(PhantomData)
         }
 
         pub fn from_fn<F: Fn() -> Ghost<T>>(_: F) -> Ghost<T> {
-            Ghost(std::marker::PhantomData)
+            Ghost(PhantomData)
+        }
+    }
+
+    impl<T: ?Sized> DerefMut for Ghost<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            panic!()
+        }
+    }
+
+    impl<T: ?Sized> Deref for Ghost<T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            panic!()
         }
     }
 }
@@ -59,11 +124,13 @@ pub mod ghost {
 #[cfg(rml)]
 mod macros {
     pub use rml_proc::{
-        extern_spec, invariant, logic, modifies, proof_assert, pure, rml, spec, strictly_pure,
-        trusted, variant,
+        extern_spec, ghost, invariant, logic, modifies, proof_assert, pure, rml, snapshot, spec,
+        strictly_pure, trusted, variant,
     };
 
     pub mod stubs {
+        use crate::snapshot::Snapshot;
+
         #[rml::decl::logic]
         #[rml::decl::internal]
         #[rustc_diagnostic_item = "rml_exists"]
@@ -105,13 +172,23 @@ mod macros {
         pub fn final_value<T>(t: T) -> T {
             t
         }
+
+        #[rml::decl::logic]
+        #[rml::decl::internal]
+        #[rustc_diagnostic_item = "rml_snapshot_from_fn"]
+        pub fn snapshot_from_fn<T, F>(f: F) -> T
+        where
+            F: Fn() -> T,
+        {
+            f()
+        }
     }
 }
 
 #[cfg(not(rml))]
 mod macros {
     pub use rml_proc_dummy::{
-        extern_spec, invariant, logic, modifies, proof_assert, pure, rml, spec, strictly_pure,
-        trusted, variant,
+        extern_spec, ghost, invariant, logic, modifies, proof_assert, pure, rml, snapshot, spec,
+        strictly_pure, trusted, variant,
     };
 }
